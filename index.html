@@ -1,0 +1,600 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+<title>AIR CANVAS // neon hand-draw</title>
+<style>
+  :root {
+    --blue:   #00e5ff;
+    --magenta:#ff2bd6;
+    --violet: #9d4bff;
+    --bg0:    #05060d;
+    --bg1:    #0b0e1c;
+    --glass:  rgba(14, 18, 40, 0.55);
+    --stroke: rgba(140, 170, 255, 0.18);
+    --txt:    #cfe3ff;
+    --txt-dim:#7d8bbf;
+  }
+
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+
+  html, body {
+    margin: 0; height: 100%; overflow: hidden;
+    background: var(--bg0);
+    font-family: "Segoe UI", system-ui, -apple-system, sans-serif;
+    color: var(--txt);
+    user-select: none;
+  }
+
+  /* animated cyber backdrop */
+  #stage {
+    position: fixed; inset: 0;
+    background:
+      radial-gradient(1200px 700px at 80% -10%, rgba(157,75,255,0.18), transparent 60%),
+      radial-gradient(1000px 600px at 10% 110%, rgba(0,229,255,0.16), transparent 60%),
+      linear-gradient(160deg, var(--bg1), var(--bg0));
+  }
+  #grid {
+    position: fixed; inset: -50%;
+    background-image:
+      linear-gradient(rgba(120,150,255,0.06) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(120,150,255,0.06) 1px, transparent 1px);
+    background-size: 46px 46px;
+    transform: perspective(600px) rotateX(58deg) translateY(-12%);
+    animation: drift 22s linear infinite;
+    opacity: 0.5;
+    pointer-events: none;
+  }
+  @keyframes drift { to { background-position: 0 920px, 920px 0; } }
+
+  /* video + canvases share one centered frame */
+  #frame {
+    position: fixed; inset: 0; margin: auto;
+    width: 100vw; height: 100vh;
+  }
+  video, canvas {
+    position: absolute; inset: 0; width: 100%; height: 100%;
+    object-fit: cover;
+  }
+  /* Only the video is mirrored (selfie view). The drawing canvases stay
+     un-flipped and we mirror the fingertip x in JS instead — flipping both
+     would double-invert and send the trail the wrong way. */
+  #cam       { transform: scaleX(-1); opacity: 0.16; filter: saturate(1.2) contrast(1.05); }
+  #draw      { z-index: 2; }
+  #fx        { z-index: 3; pointer-events: none; }
+
+  /* ---------- HUD ---------- */
+  .hud {
+    position: fixed; z-index: 10;
+    backdrop-filter: blur(14px) saturate(1.4);
+    background: var(--glass);
+    border: 1px solid var(--stroke);
+    border-radius: 16px;
+    box-shadow: 0 8px 40px rgba(0,0,0,0.5), inset 0 0 0 1px rgba(255,255,255,0.03);
+  }
+
+  /* top title bar */
+  #top {
+    top: 16px; left: 50%; transform: translateX(-50%);
+    padding: 10px 20px; display: flex; align-items: center; gap: 14px;
+  }
+  #logo {
+    font-weight: 800; letter-spacing: 4px; font-size: 15px;
+    background: linear-gradient(90deg, var(--blue), var(--magenta), var(--violet));
+    -webkit-background-clip: text; background-clip: text; color: transparent;
+    text-shadow: 0 0 22px rgba(157,75,255,0.5);
+  }
+  .dot { width: 8px; height: 8px; border-radius: 50%; background: #ff5b5b; box-shadow: 0 0 10px #ff5b5b; }
+  .dot.live { background: #28ff9b; box-shadow: 0 0 12px #28ff9b; animation: pulse 1.4s infinite; }
+  @keyframes pulse { 50% { opacity: 0.35; } }
+  #status { font-size: 11px; color: var(--txt-dim); letter-spacing: 1px; }
+
+  /* mode indicator (center-top, big) */
+  #mode {
+    top: 70px; left: 50%; transform: translateX(-50%);
+    padding: 10px 26px; font-weight: 700; letter-spacing: 6px; font-size: 18px;
+    display: flex; align-items: center; gap: 12px;
+    transition: color .25s, box-shadow .25s, border-color .25s;
+  }
+  #mode .ico { font-size: 20px; }
+  #mode[data-m="DRAW"]  { color: var(--blue);    border-color: rgba(0,229,255,.5);  box-shadow: 0 0 34px rgba(0,229,255,.25); }
+  #mode[data-m="ERASE"] { color: var(--magenta); border-color: rgba(255,43,214,.5); box-shadow: 0 0 34px rgba(255,43,214,.25); }
+  #mode[data-m="PAUSE"] { color: var(--txt-dim); border-color: var(--stroke); }
+
+  /* bottom control deck */
+  #deck {
+    bottom: 18px; left: 50%; transform: translateX(-50%);
+    padding: 14px 18px; display: flex; align-items: center; gap: 18px;
+    max-width: 94vw; flex-wrap: wrap; justify-content: center;
+  }
+  .ctl { display: flex; flex-direction: column; gap: 6px; align-items: center; }
+  .ctl label { font-size: 10px; letter-spacing: 2px; color: var(--txt-dim); text-transform: uppercase; }
+  .row { display: flex; align-items: center; gap: 10px; }
+
+  /* color swatches */
+  .swatches { display: flex; gap: 8px; }
+  .sw {
+    width: 26px; height: 26px; border-radius: 8px; cursor: pointer;
+    border: 2px solid transparent; transition: transform .15s, border-color .15s;
+  }
+  .sw:hover { transform: translateY(-2px); }
+  .sw.active { border-color: #fff; box-shadow: 0 0 14px currentColor; }
+  input[type=color] {
+    width: 34px; height: 30px; border: none; background: none; cursor: pointer; padding: 0;
+    border-radius: 8px; overflow: hidden;
+  }
+
+  /* slider + preview */
+  input[type=range] {
+    -webkit-appearance: none; width: 130px; height: 6px; border-radius: 6px;
+    background: linear-gradient(90deg, var(--blue), var(--violet)); outline: none;
+  }
+  input[type=range]::-webkit-slider-thumb {
+    -webkit-appearance: none; width: 18px; height: 18px; border-radius: 50%;
+    background: #fff; box-shadow: 0 0 12px var(--blue); cursor: pointer;
+  }
+  input[type=range]::-moz-range-thumb {
+    width: 18px; height: 18px; border: none; border-radius: 50%;
+    background: #fff; box-shadow: 0 0 12px var(--blue); cursor: pointer;
+  }
+  #preview {
+    width: 46px; height: 46px; border-radius: 50%;
+    border: 1px solid var(--stroke);
+    display: grid; place-items: center; background: rgba(0,0,0,0.3);
+  }
+  #previewDot { border-radius: 50%; }
+
+  button {
+    font-family: inherit; cursor: pointer; color: var(--txt);
+    background: rgba(255,255,255,0.04); border: 1px solid var(--stroke);
+    padding: 10px 16px; border-radius: 12px; letter-spacing: 2px; font-size: 11px;
+    transition: all .18s; text-transform: uppercase; font-weight: 600;
+  }
+  button:hover { background: rgba(255,43,214,0.12); border-color: var(--magenta); box-shadow: 0 0 18px rgba(255,43,214,0.3); }
+  button:active { transform: scale(0.96); }
+
+  /* gesture legend */
+  #legend {
+    bottom: 18px; right: 18px; padding: 12px 14px; font-size: 11px; line-height: 1.7;
+    color: var(--txt-dim); max-width: 180px;
+  }
+  #legend b { color: var(--txt); }
+
+  /* loading / error overlay */
+  #boot {
+    position: fixed; inset: 0; z-index: 50; display: grid; place-items: center;
+    background: radial-gradient(circle at center, rgba(11,14,28,0.9), var(--bg0));
+    text-align: center; transition: opacity .6s; padding: 20px;
+  }
+  #boot.hide { opacity: 0; pointer-events: none; }
+  #boot h1 {
+    font-size: clamp(28px, 7vw, 54px); letter-spacing: 8px; margin: 0 0 10px;
+    background: linear-gradient(90deg, var(--blue), var(--magenta), var(--violet));
+    -webkit-background-clip: text; background-clip: text; color: transparent;
+  }
+  #boot p { color: var(--txt-dim); letter-spacing: 2px; font-size: 13px; max-width: 420px; }
+  .spinner {
+    margin: 26px auto 0; width: 46px; height: 46px; border-radius: 50%;
+    border: 3px solid rgba(255,255,255,0.08); border-top-color: var(--blue);
+    animation: spin 0.9s linear infinite;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  #startBtn { margin-top: 26px; font-size: 13px; padding: 14px 30px; display: none; }
+  .err { color: #ff6b8b; }
+
+  @media (max-width: 620px) {
+    #legend { display: none; }
+    #mode { top: 64px; font-size: 15px; letter-spacing: 4px; padding: 8px 18px; }
+    #deck { gap: 12px; padding: 12px; }
+    input[type=range] { width: 100px; }
+  }
+</style>
+</head>
+<body>
+  <div id="stage"></div>
+  <div id="grid"></div>
+
+  <div id="frame">
+    <video    id="cam"  autoplay playsinline muted></video>
+    <canvas   id="draw"></canvas>
+    <canvas   id="fx"></canvas>
+  </div>
+
+  <!-- top bar -->
+  <div id="top" class="hud">
+    <span class="dot" id="liveDot"></span>
+    <span id="logo">AIR&nbsp;CANVAS</span>
+    <span id="status">initializing…</span>
+  </div>
+
+  <!-- mode HUD -->
+  <div id="mode" class="hud" data-m="PAUSE">
+    <span class="ico">⏸</span><span id="modeText">PAUSE</span>
+  </div>
+
+  <!-- control deck -->
+  <div id="deck" class="hud">
+    <div class="ctl">
+      <label>Color</label>
+      <div class="row">
+        <div class="swatches" id="swatches"></div>
+        <input type="color" id="customColor" value="#00e5ff" title="custom color" />
+      </div>
+    </div>
+
+    <div class="ctl">
+      <label>Brush <span id="sizeVal">8</span></label>
+      <div class="row">
+        <div id="preview"><div id="previewDot"></div></div>
+        <input type="range" id="size" min="2" max="40" value="8" />
+      </div>
+    </div>
+
+    <div class="ctl">
+      <label>Canvas</label>
+      <div class="row">
+        <button id="clearBtn">Clear</button>
+        <button id="saveBtn">Save</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- gesture legend -->
+  <div id="legend" class="hud">
+    <div>☝️ <b>Index finger</b> — Draw</div>
+    <div>🖐️ <b>Open palm</b> — Erase</div>
+    <div>✊ <b>Closed fist</b> — Pause</div>
+  </div>
+
+  <!-- boot overlay -->
+  <div id="boot">
+    <div>
+      <h1>AIR&nbsp;CANVAS</h1>
+      <p id="bootMsg">Draw in the air with your finger. Allow camera access to begin your neon canvas.</p>
+      <div class="spinner" id="spinner"></div>
+      <button id="startBtn">⚡ Enter Canvas</button>
+    </div>
+  </div>
+
+<!-- MediaPipe Hands (CDN) -->
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+<script>
+(() => {
+  "use strict";
+
+  // ---------- elements ----------
+  const cam       = document.getElementById("cam");
+  const drawCv    = document.getElementById("draw");
+  const fxCv      = document.getElementById("fx");
+  const dctx      = drawCv.getContext("2d");
+  const fctx      = fxCv.getContext("2d");
+  const modeEl    = document.getElementById("mode");
+  const modeText  = document.getElementById("modeText");
+  const statusEl  = document.getElementById("status");
+  const liveDot   = document.getElementById("liveDot");
+  const sizeInput = document.getElementById("size");
+  const sizeVal   = document.getElementById("sizeVal");
+  const preview   = document.getElementById("previewDot");
+  const swatches  = document.getElementById("swatches");
+  const customCol = document.getElementById("customColor");
+  const boot      = document.getElementById("boot");
+  const bootMsg   = document.getElementById("bootMsg");
+  const spinner   = document.getElementById("spinner");
+  const startBtn  = document.getElementById("startBtn");
+
+  // ---------- state ----------
+  let color = "#00e5ff";
+  let brush = 8;
+  let mode  = "PAUSE";                  // DRAW | ERASE | PAUSE
+  let last  = null;                     // last smoothed point {x,y}
+  let lastMid = null;                   // previous midpoint (quadratic smoothing)
+  let smooth = null;                    // exponentially-smoothed fingertip
+  const particles = [];                 // sparkle particles
+  const streak = [];                    // fading energy streak points
+
+  const PALETTE = ["#00e5ff", "#ff2bd6", "#9d4bff", "#28ff9b", "#ffd23f", "#ff5b5b"];
+
+  // ---------- canvas sizing (devicePixelRatio aware) ----------
+  function resize() {
+    const dpr = Math.min(window.devicePixelRatio || 1, 2);
+    [drawCv, fxCv].forEach(cv => {
+      cv.width  = Math.round(innerWidth  * dpr);
+      cv.height = Math.round(innerHeight * dpr);
+    });
+    dctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    fctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    dctx.lineCap = dctx.lineJoin = "round";
+  }
+  window.addEventListener("resize", resize);
+  resize();
+
+  // ---------- UI: swatches ----------
+  PALETTE.forEach((c, i) => {
+    const s = document.createElement("div");
+    s.className = "sw" + (i === 0 ? " active" : "");
+    s.style.background = c;
+    s.style.color = c;
+    s.onclick = () => setColor(c, s);
+    swatches.appendChild(s);
+  });
+  function setColor(c, el) {
+    color = c;
+    customCol.value = c;
+    document.querySelectorAll(".sw").forEach(x => x.classList.remove("active"));
+    if (el) el.classList.add("active");
+    updatePreview();
+  }
+  customCol.oninput = e => {
+    document.querySelectorAll(".sw").forEach(x => x.classList.remove("active"));
+    color = e.target.value; updatePreview();
+  };
+
+  sizeInput.oninput = e => { brush = +e.target.value; sizeVal.textContent = brush; updatePreview(); };
+  function updatePreview() {
+    const d = Math.max(4, Math.min(brush, 38));
+    preview.style.width = preview.style.height = d + "px";
+    preview.style.background = color;
+    preview.style.boxShadow = `0 0 ${d}px ${color}, 0 0 ${d*2}px ${color}`;
+  }
+  updatePreview();
+
+  document.getElementById("clearBtn").onclick = () => {
+    dctx.save(); dctx.setTransform(1,0,0,1,0,0);
+    dctx.clearRect(0, 0, drawCv.width, drawCv.height); dctx.restore();
+    penUp();
+  };
+  document.getElementById("saveBtn").onclick = () => {
+    // composite dark bg + drawing into a download
+    const out = document.createElement("canvas");
+    out.width = drawCv.width; out.height = drawCv.height;
+    const o = out.getContext("2d");
+    o.fillStyle = "#05060d"; o.fillRect(0, 0, out.width, out.height);
+    // canvas is already in screen space (what you saw) -> save as-is
+    o.drawImage(drawCv, 0, 0);
+    const a = document.createElement("a");
+    a.download = "air-canvas.png"; a.href = out.toDataURL("image/png"); a.click();
+  };
+
+  // ---------- drawing ----------
+  // Quadratic curve through midpoints => genuinely smooth handwriting,
+  // not faceted line segments. Two passes: wide glow + bright white core.
+  function drawQuad(from, ctrl, to) {
+    dctx.globalCompositeOperation = "lighter";  // additive => glow
+
+    // outer glow pass
+    dctx.strokeStyle = color;
+    dctx.shadowColor = color;
+    dctx.shadowBlur  = brush * 2.2;
+    dctx.lineWidth   = brush;
+    dctx.beginPath(); dctx.moveTo(from.x, from.y);
+    dctx.quadraticCurveTo(ctrl.x, ctrl.y, to.x, to.y); dctx.stroke();
+
+    // bright core pass
+    dctx.shadowBlur = brush * 0.6;
+    dctx.strokeStyle = "rgba(255,255,255,0.9)";
+    dctx.lineWidth = Math.max(1, brush * 0.35);
+    dctx.beginPath(); dctx.moveTo(from.x, from.y);
+    dctx.quadraticCurveTo(ctrl.x, ctrl.y, to.x, to.y); dctx.stroke();
+
+    dctx.shadowBlur = 0;
+    dctx.globalCompositeOperation = "source-over";
+  }
+
+  // Feed a new fingertip point into the active stroke.
+  function strokeTo(p) {
+    if (!last) { last = { x: p.x, y: p.y }; lastMid = { x: p.x, y: p.y }; return; }
+    // pen-up guard: ignore teleports (tracking glitch / hand re-enters frame)
+    const diag = Math.hypot(innerWidth, innerHeight);
+    if (Math.hypot(p.x - last.x, p.y - last.y) > diag * 0.22) {
+      last = { x: p.x, y: p.y }; lastMid = { x: p.x, y: p.y }; return;
+    }
+    const mid = { x: (last.x + p.x) / 2, y: (last.y + p.y) / 2 };
+    drawQuad(lastMid, last, mid);   // curve from prev midpoint, control = last vertex
+    last = { x: p.x, y: p.y }; lastMid = mid;
+  }
+  function penUp() { last = null; lastMid = null; }
+
+  function erase(p) {
+    const r = Math.max(brush * 2.4, 24);
+    dctx.save();
+    dctx.globalCompositeOperation = "destination-out";
+    dctx.beginPath(); dctx.arc(p.x, p.y, r, 0, Math.PI * 2); dctx.fill();
+    dctx.restore();
+  }
+
+  // ---------- particles + streak (fx layer) ----------
+  function spawnSparkles(p) {
+    const n = mode === "DRAW" ? 3 : 1;
+    for (let i = 0; i < n; i++) {
+      const a = Math.random() * Math.PI * 2;
+      const sp = 0.4 + Math.random() * 1.6;
+      particles.push({
+        x: p.x, y: p.y,
+        vx: Math.cos(a) * sp, vy: Math.sin(a) * sp - 0.3,
+        life: 1, size: 1 + Math.random() * 2.5, col: color
+      });
+    }
+  }
+
+  function renderFx(tip) {
+    fctx.clearRect(0, 0, innerWidth, innerHeight);
+
+    // energy streak (fades like light paint)
+    if (tip && mode === "DRAW") streak.push({ x: tip.x, y: tip.y, life: 1 });
+    for (let i = streak.length - 1; i >= 0; i--) {
+      const s = streak[i]; s.life -= 0.06;
+      if (s.life <= 0) { streak.splice(i, 1); continue; }
+    }
+    if (streak.length > 1) {
+      fctx.globalCompositeOperation = "lighter";
+      fctx.lineCap = "round"; fctx.lineJoin = "round";
+      for (let i = 1; i < streak.length; i++) {
+        const a = streak[i - 1], b = streak[i];
+        fctx.strokeStyle = color;
+        fctx.globalAlpha = b.life * 0.5;
+        fctx.lineWidth = brush * b.life * 1.4;
+        fctx.shadowColor = color; fctx.shadowBlur = 18;
+        fctx.beginPath(); fctx.moveTo(a.x, a.y); fctx.lineTo(b.x, b.y); fctx.stroke();
+      }
+      fctx.globalAlpha = 1; fctx.shadowBlur = 0;
+      fctx.globalCompositeOperation = "source-over";
+    }
+
+    // sparkle particles
+    fctx.globalCompositeOperation = "lighter";
+    for (let i = particles.length - 1; i >= 0; i--) {
+      const pt = particles[i];
+      pt.x += pt.vx; pt.y += pt.vy; pt.vy += 0.02; pt.life -= 0.03;
+      if (pt.life <= 0) { particles.splice(i, 1); continue; }
+      fctx.globalAlpha = pt.life;
+      fctx.fillStyle = pt.col; fctx.shadowColor = pt.col; fctx.shadowBlur = 10;
+      fctx.beginPath(); fctx.arc(pt.x, pt.y, pt.size, 0, Math.PI * 2); fctx.fill();
+    }
+    fctx.globalAlpha = 1; fctx.shadowBlur = 0;
+    fctx.globalCompositeOperation = "source-over";
+
+    // fingertip cursor ring
+    if (tip && mode !== "PAUSE") {
+      const ringCol = mode === "ERASE" ? "#ff2bd6" : color;
+      fctx.strokeStyle = ringCol; fctx.lineWidth = 2;
+      fctx.shadowColor = ringCol; fctx.shadowBlur = 16;
+      const r = mode === "ERASE" ? Math.max(brush * 2.4, 24) : brush + 8;
+      fctx.beginPath(); fctx.arc(tip.x, tip.y, r, 0, Math.PI * 2); fctx.stroke();
+      fctx.shadowBlur = 0;
+    }
+  }
+
+  // continuous fx loop (keeps particles/streak alive smoothly)
+  function loop() { renderFx(smooth); requestAnimationFrame(loop); }
+  requestAnimationFrame(loop);
+
+  // ---------- gesture recognition ----------
+  // landmark indices: tips 4,8,12,16,20 ; pip joints 6,10,14,18
+  function fingerStates(lm) {
+    const up = (tip, pip) => lm[tip].y < lm[pip].y;   // tip above pip => extended
+    return {
+      index:  up(8, 6),
+      middle: up(12, 10),
+      ring:   up(16, 14),
+      pinky:  up(20, 18),
+    };
+  }
+
+  function classify(lm) {
+    const f = fingerStates(lm);
+    const ext = [f.index, f.middle, f.ring, f.pinky].filter(Boolean).length;
+    // thumb extended? (x distance heuristic, mirror-agnostic)
+    const thumbOut = Math.abs(lm[4].x - lm[5].x) > 0.10;
+
+    if (ext === 0 && !thumbOut) return "PAUSE";            // fist
+    if (ext >= 3) return "ERASE";                          // open palm
+    if (f.index && !f.middle && !f.ring && !f.pinky) return "DRAW"; // index only
+    if (f.index && f.middle && !f.ring && !f.pinky) return "DRAW";  // peace also draws
+    return mode; // ambiguous -> keep current
+  }
+
+  function setMode(m) {
+    if (m === mode) return;
+    mode = m;
+    modeEl.dataset.m = m;
+    modeText.textContent = m;
+    modeEl.querySelector(".ico").textContent = m === "DRAW" ? "✎" : m === "ERASE" ? "⌫" : "⏸";
+    if (m !== "DRAW") penUp();            // break stroke continuity
+  }
+
+  // Debounce: require N consistent frames before committing a mode change,
+  // so a single misclassified frame can't chop your stroke or flicker the HUD.
+  let candidate = "PAUSE", candidateRun = 0;
+  function setModeStable(m) {
+    if (m === candidate) candidateRun++;
+    else { candidate = m; candidateRun = 1; }
+    if (candidateRun >= 2) setMode(m);
+  }
+
+  // ---------- MediaPipe results ----------
+  function onResults(res) {
+    const hands = res.multiHandLandmarks;
+    if (!hands || !hands.length) {
+      setMode("PAUSE"); smooth = null; penUp();
+      statusEl.textContent = "no hand detected";
+      return;
+    }
+    statusEl.textContent = "tracking ✦";
+    const lm = hands[0];
+    setModeStable(classify(lm));
+
+    // index fingertip -> screen px (mirror x to match flipped video)
+    const raw = { x: (1 - lm[8].x) * innerWidth, y: lm[8].y * innerHeight };
+    smooth = smooth
+      ? { x: smooth.x + (raw.x - smooth.x) * 0.45, y: smooth.y + (raw.y - smooth.y) * 0.45 }
+      : raw;
+
+    if (mode === "DRAW") {
+      strokeTo(smooth);
+      spawnSparkles(smooth);
+    } else if (mode === "ERASE") {
+      erase(smooth);
+      penUp();
+    } else {
+      penUp();
+    }
+  }
+
+  // ---------- bootstrap ----------
+  let camera = null;
+  async function init() {
+    if (typeof Hands === "undefined") {
+      fail("Could not load MediaPipe. Check your internet connection and reload.");
+      return;
+    }
+    try {
+      const hands = new Hands({
+        locateFile: f => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${f}`
+      });
+      hands.setOptions({
+        maxNumHands: 1,
+        modelComplexity: 1,
+        minDetectionConfidence: 0.6,
+        minTrackingConfidence: 0.6
+      });
+      hands.onResults(onResults);
+
+      camera = new Camera(cam, {
+        onFrame: async () => { await hands.send({ image: cam }); },
+        facingMode: "user",          // front camera on phones
+        width: 1280, height: 720
+      });
+      await camera.start();
+
+      liveDot.classList.add("live");
+      statusEl.textContent = "camera live";
+      boot.classList.add("hide");
+    } catch (e) {
+      fail("Camera access denied or unavailable. Allow webcam permission, then reload.");
+      console.error(e);
+    }
+  }
+
+  function fail(msg) {
+    spinner.style.display = "none";
+    bootMsg.innerHTML = `<span class="err">${msg}</span>`;
+    startBtn.style.display = "inline-block";
+    startBtn.textContent = "↻ Retry";
+    startBtn.onclick = () => location.reload();
+  }
+
+  // Require a user gesture to start camera (mobile autoplay policies).
+  spinner.style.display = "none";
+  startBtn.style.display = "inline-block";
+  startBtn.onclick = () => {
+    startBtn.style.display = "none";
+    spinner.style.display = "block";
+    bootMsg.textContent = "Requesting camera…";
+    init();
+  };
+})();
+</script>
+</body>
+</html>
