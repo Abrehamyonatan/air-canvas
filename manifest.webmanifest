@@ -1,0 +1,16 @@
+{
+  "name": "Air Canvas — Neon Hand Draw",
+  "short_name": "Air Canvas",
+  "description": "Draw glowing neon art in the air with your finger and webcam. Powered by MediaPipe Hands.",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#05060d",
+  "theme_color": "#05060d",
+  "categories": ["entertainment", "graphics", "utilities"],
+  "icons": [
+    { "src": "./icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" },
+    { "src": "./icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "maskable" }
+  ]
+}
